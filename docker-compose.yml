@@ -1,5 +1,62 @@
-# TODO: 4 services: db + 3 node instances
-# Each node needs:
-# - NODE_ID env var (1, 2, 3)
-# - Different port mapping (8081, 8082, 8083)
-# - PEERS env var listing other nodes (e.g., "http://node-2:8080,http://node-3:8080")
+# Definición de la versión del esquema de servicios de Docker Compose
+services:
+  # Servicio 1: Base de datos relacional PostgreSQL
+  db:
+    # Imagen oficial de PostgreSQL 16 ligera basada en Alpine Linux
+    image: postgres:16-alpine
+    # Reinicia automáticamente el contenedor si se cae o falla
+    restart: always
+    # Variables de entorno para inicializar la base de datos de PostgreSQL
+    environment:
+      POSTGRES_USER: noderegistry      # Nombre del usuario de la BD
+      POSTGRES_PASSWORD: noderegistry  # Contraseña del usuario de la BD
+      POSTGRES_DB: noderegistry        # Nombre de la base de datos a crear
+    # Chequeo de salud para garantizar que PostgreSQL esté listo para recibir conexiones antes de iniciar los nodos
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U noderegistry -d noderegistry"]
+      interval: 3s     # Frecuencia de verificación cada 3 segundos
+      timeout: 3s      # Tiempo máximo de espera por respuesta
+      retries: 5       # Reintentos antes de marcar el contenedor como 'unhealthy'
+
+  # Servicio 2: Instancia del Nodo 1 (NODE_ID=1)
+  node-1:
+    # Construye la imagen Docker utilizando el Dockerfile presente en la raíz del proyecto (.)
+    build: .
+    # Variables de entorno específicas para el Nodo 1
+    environment:
+      NODE_ID: 1  # ID único del nodo (utilizado en la prioridad del algoritmo Bully)
+      DATABASE_URL: postgresql://noderegistry:noderegistry@db:5432/noderegistry # Cadena de conexión a PostgreSQL
+      PEERS: "http://node-2:8080,http://node-3:8080" # Lista de URLs de los otros nodos vecinos en la red de Docker
+    # Mapeo de puertos: mapea el puerto 8081 del host al puerto 8080 interno del contenedor
+    ports:
+      - "8081:8080"
+    # Dependencia: Espera a que el servicio 'db' esté completamente saludable (healthy) antes de arrancar
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Servicio 3: Instancia del Nodo 2 (NODE_ID=2)
+  node-2:
+    build: .
+    environment:
+      NODE_ID: 2  # ID único del nodo 2 (mayor jerarquía que el nodo 1)
+      DATABASE_URL: postgresql://noderegistry:noderegistry@db:5432/noderegistry
+      PEERS: "http://node-1:8080,http://node-3:8080" # Peers del nodo 2 (nodo 1 y nodo 3)
+    ports:
+      - "8082:8080" # Mapeado al puerto 8082 en la máquina host
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Servicio 4: Instancia del Nodo 3 (NODE_ID=3)
+  node-3:
+    build: .
+    environment:
+      NODE_ID: 3  # ID único del nodo 3 (la mayor jerarquía del clúster actual)
+      DATABASE_URL: postgresql://noderegistry:noderegistry@db:5432/noderegistry
+      PEERS: "http://node-1:8080,http://node-2:8080" # Peers del nodo 3 (nodo 1 y nodo 2)
+    ports:
+      - "8083:8080" # Mapeado al puerto 8083 en la máquina host
+    depends_on:
+      db:
+        condition: service_healthy
